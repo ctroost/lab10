@@ -1,0 +1,314 @@
+---
+title: "STAT 209: Lab 10"
+author: "Casey Troost"
+date: "July 13, 2021"
+output:
+  html_document:
+    css: ~/stat209/originals/lab.css
+    highlight: pygments
+    theme: cerulean
+    code_folding: hide
+    toc: true
+    toc_float: true
+  pdf_document: default
+---
+
+```{r setup, include = FALSE}
+## This is a setup/formatting chunk
+library(tidyverse)
+
+## Some customization.  (Leave this part alone)
+
+theme_set(theme_bw()) # change theme for ggplot2
+
+## Sets default "chunk options"
+knitr::opts_chunk$set(
+  tidy    = FALSE,       # display code as typed
+  size    = "small",     # slightly smaller font for code
+  message = FALSE)  # suppresses some unwanted output
+```
+
+# Data-Wrangling: Putting it All Together
+
+## Goal
+
+Refresh your memory about the main data-wrangling building blocks, and work through an extended example that combines them in various ways to achieve a goal.
+
+## The Data
+
+This lab is not about baby names!  Woohoo!
+
+Instead, we'll look at some baseball data from the `Lahman` package.
+
+This lab is modified from section 4.4 in your textbook.
+
+Our overarching goal is the following: for a few star major league hitters, create a plot that shows the hitting statistic OPS+ (On-Base-Plus-Slugging average for the player relative to league average in that year) for each player in each season that they played in the majors, as a function of their age.  This will enable us to see at a glance at what age various star players "peaked" (at least, according to this one measure).
+
+First, we'll need to load the `Lahman` package and a couple of datasets.
+
+```{r, message = FALSE}
+library(tidyverse)
+library(Lahman)
+data(Batting)  # Batting statistics by player-season-team combination
+data(Master)   # Biographical data by player
+```
+
+Let's see what the data in each of these two tables looks like.
+
+```{r}
+Batting %>% slice_head(n = 5)
+```
+
+```{r}
+Master %>% slice_head(n = 5)
+```
+
+## Focusing on a single player: Manny Ramirez
+
+Notice that in both of these data tables, players are indexed not by their names, but by unique player IDs.  Manny Ramirez, for example, is `"ramirma02"`.
+
+How would we know this?  We can get it from the `Master` data table which records players' first and last names along with their unique IDs.
+
+**Code:**
+```{r}
+filter(Master, nameFirst == "Manny", nameLast == "Ramirez")
+```
+
+(In this case, there were no other major leaguers with that name, so there's no ambiguity; but for other names there might be more than one player with that name, hence the need for a unique ID.) 
+
+Having done that, we can filter the batting data to look at Ramirez's season-by-season stats.
+
+**Code:**
+```{r}
+MannyData <- filter(Batting, playerID == "ramirma02")
+MannyData
+```
+
+### Which seasons was he active? (`summarize()`)
+
+We can see from this data that each "case" in the `Batting` dataset appears to consist of a season's worth of hitting data for a single player.  Manny Ramirez has 21 entries.  Was he active for 21 seasons?  Let's check.
+
+**Code**
+```{r}
+MannyData %>% 
+  summarize(
+    rookie_year = min(yearID), 
+    final_year  = max(yearID),
+    num_seasons = n_distinct(yearID),
+    num_teams   = n_distinct(teamID))
+```
+
+Note that I used a new function, `n_distinct()`, to return the number of _distinct_ values of a variable in a column.
+
+Hmm... looks like he only played in 19 seasons (for a total of 5 different teams); not 21.  What's happening here?
+
+It turns out that the rows of the `Batting` table are not necessarily a full season's worth of data.  If a player was traded during a season, then they played for two different teams that year, and so there are two different entries in the data.  There must be two years when that happened for Ramirez.  Let's find out which they are.
+
+### When was he traded? (`group_by()` and `summarize()`)
+
+1. Group `MannyData` by season, and use `summarize()` to return the number of different teams recorded in each season. You may want to `filter()` the data to show only those years when he played for more than one team.
+
+---
+##### SOLUTION
+```{r}
+MannyData %>%
+  group_by(yearID) %>%
+  summarize(
+    num_teams = n()) %>%
+  arrange(desc(num_teams))
+```
+---
+
+If we want to compute Manny's batting statistics by full season, we're going to have to do some aggregation to combine the two rows in these years.
+
+
+2. Compute and plot the total number of home runs hit by Ramirez in each season (making sure to correctly handle seasons when he was traded, summing his home runs across teams)
+```{r}
+MannyData_HR <- MannyData %>%
+  group_by(yearID) %>%
+  summarize(
+     HR_sum = sum(HR))
+
+Manny_HR_Plot <- MannyData_HR %>%
+  ggplot(aes(x = yearID, y = HR_sum)) +
+  geom_line()
+
+Manny_HR_Plot
+```
+
+3. Ramirez hit the most home runs in 1998 and 2005.  Of course, new players may not play as often as players that have been around for a few years, so let's instead plot Ramirez's "projected" home runs extrapolating to 162 games. Use `mutate()` to create a variable that consists of home runs per 162 games. You may want to revise your `group_by()` and `summarize()` code from the previous exercise to include the number of games played to make this easier (you'll want to sum actual home runs and games over records first before mutating so that the home run rate is computed correctly).
+
+```{r}
+MannyData_Predict <- MannyData %>%
+  group_by(yearID) %>%
+  mutate(
+    HR_prediction = 162*(sum(HR) / sum(G)))
+#nested the rate into the prediction to make it neater
+
+Manny_HR_Predict_Plot <- MannyData_Predict %>%
+  ggplot(aes(x = yearID, y = HR_prediction)) +
+  geom_line()
+
+Manny_HR_Predict_Plot
+```
+
+The shape is basically the same, but now we can see that although Ramirez hit the same number of home runs in 2000 and 2005, he did it in fewer games in 2000.
+
+
+### Adding Age to the Data (`join()`)
+
+Our original goal was to construct a plot similar to this by the player's age, instead of by season.  Can we find age in the `Batting` table?
+```{r}
+Batting %>% slice_head(n = 5)
+```
+
+Hmm... nope.  Nor is there anything in this table that we can use to calculate age.  What about in the biographical table, `Master`?
+
+```{r}
+Master %>% slice_head(n = 5)
+
+```
+Aha, this table gives us players' birth years.
+
+To a first approximation (that is, ignoring birth month and day), we can represent age using the formula `yearID - birthYear`.  Only problem is, these two variables come from different data tables.
+
+This sounds like a job for a `join`!
+
+
+4. Use a suitable `join` operation, together with whatever other verbs are needed, to get `Age` added to Manny's year-by-year data table, and plot the total number of homeruns/162 by his age instead of by season.
+
+```{r}
+MannyData_BirthYear <- MannyData %>%
+  inner_join(Master, by = "playerID") %>%
+  group_by(yearID) %>%
+  mutate(
+    HR_prediction = 162*(sum(HR) / sum(G)),
+    Age = yearID - birthYear)
+
+MannyData_BR_Predict_Plot <- MannyData_BirthYear %>%
+  ggplot(aes(x = Age, y = HR_prediction)) +
+  geom_line()
+
+MannyData_BR_Predict_Plot
+ 
+```
+
+
+### Putting together some pieces
+
+5. Produce analogous plots using On-Base Percentage (OBP) and Slugging Average (SLG), and OPS (On-Base plus Slugging) instead of HR/162. If you don't know what these statistics are, that's ok; you can calculate them as follows. The formula for OBP is: $OBP = (H + BB + HBP) / (AB + BB + HBP + SF)$, where $H$ stands for "hits" (an at-bat in which the player did not reach base safely after hitting the ball in play), $BB$ stands for "base-on-balls" (a walk), $HBP$ is a "hit by pitch".  Slugging average is the average number of bases per at bat, and is calculated as a weighted sum of the number of singles, doubles, triples and home runs, divided by the number of at-bats: $SLG = (1 * X1B + 2 * X2B + 3 * X3B + 4 * HR) / AB$.  Note that the data table does not include a separate column for singles, but every hit is either a single, a double, a triple or a home run, so it can be worked out from those counts and the total number of hits. Finally, $OPS = OBP + SLG$. Before you calculate these statistics, you'll want to combine the count statistics across teams within a season. Since we're applying the same operation (summing) across several variables, this is a good time to use `summarize_at()` to specify a set of variables and an operation, rather than writing each one out individually with a regular `summarize()`.
+
+```{r}
+MannyData_X1B_BY <- MannyData_BirthYear %>%
+  group_by(yearID) %>%
+  mutate(
+    X1B = H - (2*X2B + 3*X3B + HR))
+
+MannyData_statsums <- MannyData_X1B_BY %>%
+  group_by(yearID) %>%
+  summarize_at(
+    .vars = c("H", "BB", "HBP", "AB", "SF", "X1B", "X2B", "X3B", "HR"),
+    .funs = sum)
+
+MannyData_OBP_SLG_OPS <- MannyData_statsums %>%
+  group_by(yearID)%>%
+  summarize(
+    OBP = (H + BB + HBP) / (AB + BB + HBP + SF),
+    SLG = (1 * X1B + 2 * X2B + 3 * X3B + 4 * HR) / AB,
+    OPS = OBP + SLG)
+ 
+
+MannyData_OBP_Plot <- MannyData_OBP_SLG_OPS %>%
+  ggplot(aes(x = yearID, y = OBP)) + 
+  geom_line()
+
+MannyData_SLG_Plot <- MannyData_OBP_SLG_OPS %>%
+  ggplot(aes(x = yearID, y = SLG)) + 
+  geom_line()
+
+MannyData_OPS_Plot <- MannyData_OBP_SLG_OPS %>%
+  ggplot(aes(x = yearID, y = OPS)) + 
+  geom_line()
+
+MannyData_OBP_Plot
+MannyData_SLG_Plot
+MannyData_OPS_Plot
+```
+
+
+## For Reference: Baseball Hitting Statistics in a Nutshell
+
+You don't necessarily need to know all the details about baseball to create visualizations, but it's never a bad idea to learn something about the measures you're plotting. So if you aren't familiar with baseball, here's a quick "glossary".
+
+Each time a hitter appears at home plate to hit, the outcome is either
+
+* a **hit** (the player reached base safely after hitting the ball in play or out of the park as a home run)
+* a **walk** (the pitcher missed the strike zone four times without the batter swinging the bat)
+* a **"hit by pitch"** (the batter got hit by the pitch, and gets to go to first base)
+* **"sacrifice fly"** (the defending team catches the ball in the air so that the batter is out, but the ball is hit deep enough that a runner already on base can advance), or
+* some other kind of out.  
+
+Among hits
+* a **single** means the runner reached first base on the play
+* a **double** or a **triple** mean the batter reached second or third, respectively, and
+* a **home run** means the batter made it all the way around the bases (for a total of four bases on the play).  
+
+For the purposes of recording statistics, walks, being hit by a pitch, and sacrifice flies are not recorded as **"at bats"**, and so for the purposes of calculating the traditional "**batting average**", they don't factor in to either the numerator or the denominator: batting average (BA) is simply "hits" (H) divided by "at bats" (AB).  
+
+Unlike batting average, "on-base percentage" counts any outcome in which the player ends up on the bases (hits, walks, hit by pitch) in the numerator, and counts every **plate appearance** (all of these things plus outs including sacrifice flies) in the denominator.  
+
+If you've ever read the book or seen the movie _Moneyball_ about the 2002 Oakland A's, one of the key insights that Billy Beane and his analysts had was that the league as a whole had been undervaluing outcomes in which the player reached base not via a hit, and so they tried to sign players with high OBPs relative to their batting average.
+
+
+### Comparing a hitter's stats to league average (wrangling together tables to be `join()`ed)
+
+Around the turn of the millenium (coinciding with Manny Ramirez's peak), many hitters were putting up off the charts hitting numbers, which can at least in part be attributed to a high rate of steroid abuse during that time.  If we want to know when a player (Ramirez, for example) provided the greatest "added offensive value" to his team, it would be instructive to know how well he was hitting in each season **relative to the rest of the league**.  
+
+The statistic OPS+ is defined as a player's OPS divided by the league average in that year, times 100 (so that 100 is league average, 150 means the player's OPS was 50% higher than league average, etc.).  Like age, however, OPS+ depends on information from two different data tables; or at least two views of the `Batting` data: the numerator comes from data for a specific player, and the denominator comes from data aggregated over players.
+
+We can use a `join` to deal with this as well, but we first need to create the two tables (with the right type of aggregation) that we want to join.
+
+We already know how to compute an individual player's OPS.  To compute the average for the whole league, we can do the same thing but without filtering first.
+
+**Code:**
+```{r}
+LeagueData <- Batting %>%
+  mutate(X1B = H - X2B - X3B - HR) %>%
+  group_by(yearID) %>%
+  summarize(
+    leagueOPS = 
+      sum(H + BB + HBP, na.rm = TRUE) / sum(AB + BB + HBP + SF, na.rm = TRUE) +
+      sum(X1B + 2*X2B + 3*X3B + 4*HR, na.rm = TRUE) / sum(AB, na.rm = TRUE))
+LeagueData %>% slice_tail(n = 5)
+```
+
+You might notice that very long-ago years are missing some of the components needed to compute OPS, and so we get "not a number" for league OPS since in some cases we end up trying to divide zero by zero.  We could have filtered out these early years, but they won't cause a problem for what we want to do, since in `join`ing, they'll be left out anyway.
+
+
+6. Now that we have a dataset with league average OPS for each year, use an appropriate `join` to get Manny Ramirez's OPS+ for each season, and plot it as a time series. Add a horizontal reference line at OPS+ = 100, since this is the league average.
+
+```{r}
+MannyDataOPSjoin <- MannyData_OBP_SLG_OPS %>%
+  inner_join(LeagueData, by = "yearID")
+
+MannyDataOPSplus <- MannyDataOPSjoin %>%
+  group_by(yearID) %>%
+  summarize(
+    OPSplus = 100*(OPS/leagueOPS)) %>%
+  ggplot(aes(x = yearID, y = OPSplus)) +
+  geom_line() +
+  geom_hline(yintercept = 100)
+
+
+MannyDataOPSplus
+  
+```
+
+## Beyond Manny Ramirez
+
+7. Produce a similar plot for another well known player of your choice (or if you're not familiar with baseball players, take, say, Cal Ripken).  Does the career arc look similar to that of Manny Ramirez? **Note:** Some names have more than one player in the database with that name. Cal Ripken is one (the most famous one is Cal Ripken, Jr.; his father also was an MLB player). To filter the data to include just one player, we'll want to extract the player ID for Cal Ripken, Jr. After filtering the `Master` table, to a table called, say, `RipkenBioData`, we can use the following syntax to get just the first entry in the `playerID` column: `RipkenBioData %>% slice_head(n = 1) %>% pull(playerID)`.
+
+```{r}
+
+```
+
