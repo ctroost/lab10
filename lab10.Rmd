@@ -215,7 +215,8 @@ MannyData_OBP_SLG_OPS <- MannyData_statsums %>%
   summarize(
     OBP = (H + BB + HBP) / (AB + BB + HBP + SF),
     SLG = (1 * X1B + 2 * X2B + 3 * X3B + 4 * HR) / AB,
-    OPS = OBP + SLG)
+    OPS = OBP + SLG,
+    name = "Manny Ramirez")
  
 
 MannyData_OBP_Plot <- MannyData_OBP_SLG_OPS %>%
@@ -309,6 +310,45 @@ MannyDataOPSplus
 7. Produce a similar plot for another well known player of your choice (or if you're not familiar with baseball players, take, say, Cal Ripken).  Does the career arc look similar to that of Manny Ramirez? **Note:** Some names have more than one player in the database with that name. Cal Ripken is one (the most famous one is Cal Ripken, Jr.; his father also was an MLB player). To filter the data to include just one player, we'll want to extract the player ID for Cal Ripken, Jr. After filtering the `Master` table, to a table called, say, `RipkenBioData`, we can use the following syntax to get just the first entry in the `playerID` column: `RipkenBioData %>% slice_head(n = 1) %>% pull(playerID)`.
 
 ```{r}
+CalData <- Batting %>% 
+  filter(
+    playerID == "ripkeca01") 
+
+CalData_X1B_BY <- CalData %>%
+  group_by(yearID) %>%
+  mutate(
+    X1B = H - (2*X2B + 3*X3B + HR))
+
+CalData_statsums <- CalData_X1B_BY %>%
+  group_by(yearID) %>%
+  summarize_at(
+    .vars = c("H", "BB", "HBP", "AB", "SF", "X1B", "X2B", "X3B", "HR"),
+    .funs = sum)
+
+  
+CalData_OBP_SLG_OPS <- CalData_statsums %>%
+  group_by(yearID)%>%
+  summarize(
+    OBP = (H + BB + HBP) / (AB + BB + HBP + SF),
+    SLG = (1 * X1B + 2 * X2B + 3 * X3B + 4 * HR) / AB,
+    OPS = OBP + SLG,
+    name = "Cal Ripken")
+
+CalData_OBP_SLG_OPS
+MannyData_OBP_SLG_OPS
+
+MannyCalData_OBP_SLG_OPS <- full_join(CalData_OBP_SLG_OPS, MannyData_OBP_SLG_OPS)
+
+MannyCalPlot <- MannyCalData_OBP_SLG_OPS %>%
+  pivot_longer(
+    cols = 2:4,
+    names_to = "Stat_Type",
+    values_to = "Respective_Rate") %>%
+  ggplot(aes(x = yearID, y = Respective_Rate)) +
+  geom_line(aes(x = yearID, y = Respective_Rate, linetype = Stat_Type, colour = name)) +
+  ggtitle("Comparing Careers")
+
+MannyCalPlot
 
 ```
-
+Cal Ripken seems slightly less successful than Manny Ramirez, based on this comparison. But since his career happens largely before the steriod era, this may not indicate a difference in raw skill. 
